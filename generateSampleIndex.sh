@@ -33,8 +33,31 @@ if [ "$SUBFOLDER_COUNT" -eq 0 ]; then
 fi
 echo ""
 
+# Check for existing strudel.json to use as default repo URL
+DEFAULT_REPO_URL=""
+EXISTING_JSON="$SAMPLE_ROOT/strudel.json"
+if [ -f "$EXISTING_JSON" ]; then
+    # Extract _base value from existing JSON
+    EXISTING_BASE=$(grep -oP '"_base"\s*:\s*"\K[^"]+' "$EXISTING_JSON" 2>/dev/null)
+    if [ -n "$EXISTING_BASE" ]; then
+        # Convert raw URL back to normal GitHub URL
+        # https://raw.githubusercontent.com/user/repo/branch/ -> https://github.com/user/repo
+        if [[ "$EXISTING_BASE" =~ ^https://raw\.githubusercontent\.com/([^/]+/[^/]+) ]]; then
+            DEFAULT_REPO_URL="https://github.com/${BASH_REMATCH[1]}"
+        else
+            DEFAULT_REPO_URL="$EXISTING_BASE"
+        fi
+        echo "  Found existing strudel.json with repo: $DEFAULT_REPO_URL"
+    fi
+fi
+
 # Prompt for GitHub repo URL
-read -p "GitHub repo URL (default: https://github.com/user/repo): " REPO_URL
+if [ -n "$DEFAULT_REPO_URL" ]; then
+    read -p "GitHub repo URL [default: $DEFAULT_REPO_URL]: " REPO_URL
+    REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
+else
+    read -p "GitHub repo URL: " REPO_URL
+fi
 
 # Strip trailing slashes
 REPO_URL="${REPO_URL%/}"
@@ -116,6 +139,56 @@ JSON="$JSON\n}"
 echo -e "$JSON" > "$OUTPUT_PATH"
 
 echo ""
-echo "=== Done ==="
+echo "=== Index Complete ==="
 echo "  Total files indexed: $TOTAL_FILES"
 echo "  Output written to: $OUTPUT_PATH"
+echo ""
+
+# Extract user/repo from the repo URL for the strudel snippet
+GITHUB_PATH=""
+if [[ "$REPO_URL" =~ ^https://github\.com/(.+)$ ]]; then
+    GITHUB_PATH="${BASH_REMATCH[1]}"
+fi
+
+# Autopush to git
+read -p "Autopush files to git repo? [y/N]: " AUTOPUSH
+if [[ "$AUTOPUSH" =~ ^[Yy]$ ]]; then
+    echo ""
+    echo "Pushing to git..."
+
+    cd "$SAMPLE_ROOT" || { echo "Error: Could not cd to $SAMPLE_ROOT"; exit 1; }
+
+    # Check if inside a git repo
+    if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+        echo "Error: '$SAMPLE_ROOT' is not inside a git repository."
+        echo "  Run 'git init' first, or check your path."
+        exit 1
+    fi
+
+    git add .
+    git commit -m "Update sample index ($TOTAL_FILES files indexed)"
+
+    if git push; then
+        echo ""
+        echo "=== Push Complete ==="
+    else
+        echo ""
+        echo "Error: git push failed. Check your remote configuration."
+        exit 1
+    fi
+else
+    echo "Skipping git push."
+fi
+
+# Print strudel usage snippet
+echo ""
+echo "=== Use in Strudel ==="
+if [ -n "$GITHUB_PATH" ]; then
+    echo ""
+    echo "  samples('github:$GITHUB_PATH')"
+    echo ""
+else
+    echo ""
+    echo "  samples('github:user/repo')  (replace with your GitHub path)"
+    echo ""
+fi
